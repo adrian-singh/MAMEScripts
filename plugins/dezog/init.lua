@@ -228,7 +228,19 @@ function dezog.startplugin()
             elseif cmdid == 41 then --CMD_REMOVE_BREAKPOINT
                 print("dezog: CMD_REMOVE_BREAKPOINT")
                 local bpid = string.unpack("<I2", payload)
-                cpu.debug:bpclear(bpid)
+                local bpl = cpu.debug:bplist();
+                local bp = bpl[bpid]
+                if bp then
+                    -- Check for duplicate breakpoints at the same address and remove them all                    
+                    for id, oldbp in pairs(bpl) do
+                        if oldbp.address == bp.address then
+                            print("dezog: removing breakpoint at", oldbp.address, "with id", id)
+                            cpu.debug:bpclear(id)            
+                        end                    
+                    end
+                else
+                    cpu.debug:bpclear(bpid)
+                end                
                 response = nil
             else
                 print("dezog: unknown command", cmdid)
