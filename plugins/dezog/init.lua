@@ -35,6 +35,7 @@ function dezog.startplugin()
     local debugger
     local cpu
     local mem
+    local ports
     local nregs    
     
     local break_reason = 0
@@ -57,7 +58,8 @@ function dezog.startplugin()
                 print("dezog: maincpu not found")
             end
 
-            mem = cpu.spaces["program"]                                
+            mem = cpu.spaces["program"] 
+            ports = cpu.spaces["io"]                               
             nregs = manager.machine.devices[":regs_map"].spaces["program"]            
 
             initialized = false
@@ -69,6 +71,7 @@ function dezog.startplugin()
     stop_subscription = emu.add_machine_stop_notifier(function ()
         cpu = nil
         mem = nil
+        ports = nil
         nregs = nil
         
         debugger = nil    
@@ -121,7 +124,14 @@ function dezog.startplugin()
                 if enable_logging then 
                     print("dezog: CMD_INIT")
                 end
+
+                debugger.execution_state = "stop" 
+                break_reason = -255
+                
                 cpu.debug:bpclear()
+
+                ports:writev_u8(0xe3, 0)
+            
                 response = string.pack("I1I1I1I1I1c17", 0, 2, 0, 0, 4, "mame_dzrp v0.0.1\0")       
             elseif cmdid == 2 then -- CMD_CLOSE
                 if enable_logging then
@@ -212,6 +222,9 @@ function dezog.startplugin()
                 if enable_logging then
                     print("dezog: CMD_READ_MEM", string.format("0x%04X", addr), size)
                 end
+                if (addr + size - 1) > 0xffff then
+                  size = 0xffff - addr + 1  
+                end
                 response = mem:read_range(addr, addr + size - 1, 8)                                
             elseif cmdid == 9 then -- CMD_WRITE_MEM
                 if enable_logging then
@@ -243,10 +256,7 @@ function dezog.startplugin()
                     print("dezog: CMD_SET_BORDER")
                 end
                 local border = string.unpack("I1", payload)
-                local ports = cpu.spaces["io"]
-                if ports then
-                    ports:writev_u8(0xfe, border & 0x07)
-                end
+                ports:writev_u8(0xfe, border & 0x07)                
                 response = nil
             elseif cmdid == 40 then --CMD_ADD_BREAKPOINT
                 if enable_logging then
@@ -282,7 +292,7 @@ function dezog.startplugin()
             end
         end
         
-        if initialized and last_state ~= debugger.execution_state and debugger.execution_state == "stop" then
+        if initialized and last_state ~= debugger.execution_state and debugger.execution_state == "stop" and break_reason ~= -255 then
             if enable_logging then
                 print("dezog: execution state changed to '" .. debugger.execution_state .. "'")
             end            
@@ -295,7 +305,8 @@ function dezog.startplugin()
                 temp_bp = {}
             end
             local pc = cpu.state["PC"].value
-            local bank = math.floor(pc / 0x2000)
+            local slot = math.floor(pc / 0x2000)
+            local bank = nregs:readv_u8(0x50 + slot)
 
             if break_reason == 1 then -- manual break (Pause sent)
                 response = string.pack("I1I1<I2I1c1", 1, 1, 0, 0, "\0")
