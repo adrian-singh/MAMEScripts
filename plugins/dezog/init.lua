@@ -4,6 +4,7 @@ exports.version = "1.0"
 exports.description = "DeZog plugin for advanced debugging"
 
 local dezog = exports
+local enable_logging = false
 
 local regmap = {
     PC=0, SP=1, 
@@ -34,8 +35,8 @@ function dezog.startplugin()
     local debugger
     local cpu
     local mem
-    local nregs
-
+    local nregs    
+    
     local break_reason = 0
     local last_state = nil
 
@@ -56,8 +57,8 @@ function dezog.startplugin()
                 print("dezog: maincpu not found")
             end
 
-            mem = cpu.spaces["program"]
-            nregs = manager.machine.devices[":regs_map"].spaces["program"]
+            mem = cpu.spaces["program"]                                
+            nregs = manager.machine.devices[":regs_map"].spaces["program"]            
 
             initialized = false
             socket_open = false
@@ -69,6 +70,7 @@ function dezog.startplugin()
         cpu = nil
         mem = nil
         nregs = nil
+        
         debugger = nil    
         initialized = false
         socket_open = false
@@ -107,21 +109,31 @@ function dezog.startplugin()
             end
 
             -- Process packet
-            print("--")
-            --print("dezog: received packet", len, seq, cmdid, toHex(payload))
-            print("dezog: received packet", len, seq, cmdid)
+            if enable_logging then
+                print("--")
+                --print("dezog: received packet", len, seq, cmdid, toHex(payload))
+                print("dezog: received packet", len, seq, cmdid)
+            end
 
             local response = nil
             if cmdid == 1 then -- CMD_INIT
                 initialized = true
-                print("dezog: CMD_INIT")
+                if enable_logging then 
+                    print("dezog: CMD_INIT")
+                end
+                cpu.debug:bpclear()
                 response = string.pack("I1I1I1I1I1c17", 0, 2, 0, 0, 4, "mame_dzrp v0.0.1\0")       
             elseif cmdid == 2 then -- CMD_CLOSE
-                print("dezog: CMD_CLOSE")
+                if enable_logging then
+                     print("dezog: CMD_CLOSE")
+                end
+                cpu.debug:bpclear()                
                 socket_open = false
                 response = nil
             elseif cmdid == 3 then -- CMD_GET_REGISTERS
-                print("dezog: CMD_GET_REGISTERS")                
+                if enable_logging then
+                     print("dezog: CMD_GET_REGISTERS")
+                end                
                 local bank0 = nregs:readv_u8(0x50)
                 local bank1 = nregs:readv_u8(0x51)
                 local bank2 = nregs:readv_u8(0x52)
@@ -149,7 +161,9 @@ function dezog.startplugin()
                 cpu.state["IM"].value,
                 0,8,bank0,bank1,bank2,bank3,bank4,bank5,bank6,bank7)
             elseif cmdid == 4 then -- CMD_SET_REGISTER
-                print("dezog: CMD_SET_REGISTER")
+                if enable_logging then
+                     print("dezog: CMD_SET_REGISTER")
+                end                
                 local regnum, value = string.unpack("I1I2", payload)
                 local regname = regmap_inv[regnum + 1]
                 if regname == "" then
@@ -157,17 +171,22 @@ function dezog.startplugin()
                 end
                 cpu.state[regname].value = value
                 reponse = nil
-            elseif cmdid == 5 then -- CMD_WRITE_BANK
-                print("dezog: CMD_WRITE_BANK")
+            elseif cmdid == 5 then -- CMD_WRITE_BANK                
                 local banknum = string.unpack("I1", payload)
-                
-                local ss=""
+                local bankaddr = 0x40000 + (banknum * 0x2000)
+                if enable_logging then
+                    print("dezog: CMD_WRITE_BANK")
+                    print("dezog: CMD_WRITE_BANK", banknum, string.format("0x%05X", bankaddr))
+                end                
+                local sram = emu.item(manager.machine.devices[":ram"].items["0/m_pointer"])
                 for i=1, len-1 do
-                    mem:writev_u8(banknum * 0x2000 + (i - 1), string.byte(payload, i + 1))                    
+                    sram:write(bankaddr + (i - 1), string.byte(payload, i + 1))            
                 end                
                 response = string.pack("I1c1", 0, "\0")
             elseif cmdid == 6 then -- CMD_CONTINUE
-                print("dezog: CMD_CONTINUE")
+                if enable_logging then
+                     print("dezog: CMD_CONTINUE")
+                end                
                 local bp1en, bp1addr, bp2en, bp2addr, altcmd, startaddr, endaddr = string.unpack("I1<I2I1<I2I1<I2<I2", payload)
                 last_state = nil
                 temp_bp = {
@@ -182,21 +201,22 @@ function dezog.startplugin()
                 debugger.execution_state = "run"                
                 response = nil                
             elseif cmdid == 7 then -- CMD_PAUSE
-                print("dezog: CMD_PAUSE")
+                if enable_logging then
+                     print("dezog: CMD_PAUSE")
+                end                
                 debugger.execution_state = "stop" 
                 break_reason = 1                               
                 response = nil   
             elseif cmdid == 8 then -- CMD_READ_MEM
-                print("dezog: CMD_READ_MEM")
                 local reserved, addr, size = string.unpack("I1I2I2", payload)
-                
-                local bytes = ""
-                for i=0, size-1 do
-                    bytes = bytes .. string.char(mem:readv_u8(addr + i))
+                if enable_logging then
+                    print("dezog: CMD_READ_MEM", string.format("0x%04X", addr), size)
                 end
-                response = bytes
+                response = mem:read_range(addr, addr + size - 1, 8)                                
             elseif cmdid == 9 then -- CMD_WRITE_MEM
-                print("dezog: CMD_WRITE_MEM")
+                if enable_logging then
+                     print("dezog: CMD_WRITE_MEM")
+                end                
                 local reserved, addr = string.unpack("I1I2", payload)
                 
                 local ss=""
@@ -205,36 +225,47 @@ function dezog.startplugin()
                 end                
                 response = nil
             elseif cmdid == 10 then -- CMD_SET_SLOT
-                print("dezog: CMD_SET_SLOT")
-                
+                if enable_logging then
+                     print("dezog: CMD_SET_SLOT")
+                end                
                 local slotnum, bank = string.unpack("I1I1", payload)
                 nregs:writev_u8(0x50 + slotnum, bank)                
                 response = string.pack("I1", 0)
             elseif cmdid == 11 then -- CMD_GET_TBBLUE_REG
-                print("dezog: CMD_GET_TBBLUE_REG")
+                if enable_logging then
+                     print("dezog: CMD_GET_TBBLUE_REG")
+                end                
                 local regnum = string.unpack("I1", payload)
                 local value = nregs:readv_u8(regnum)
                 response = string.pack("I1", value)
             elseif cmdid == 12 then -- CMD_SET_BORDER
-                print("dezog: CMD_SET_BORDER (not implemented)")
+                if enable_logging then
+                    print("dezog: CMD_SET_BORDER")
+                end
                 local border = string.unpack("I1", payload)
-                -- implement set border
+                local ports = cpu.spaces["io"]
+                if ports then
+                    ports:writev_u8(0xfe, border & 0x07)
+                end
                 response = nil
             elseif cmdid == 40 then --CMD_ADD_BREAKPOINT
-                print("dezog: CMD_ADD_BREAKPOINT")
+                if enable_logging then
+                     print("dezog: CMD_ADD_BREAKPOINT")
+                end                
                 local bpaddr, bpbank = string.unpack("<I2I1", payload)
                 local id = cpu.debug:bpset(bpaddr, "", "")
                 response = string.pack("<I2", id)
             elseif cmdid == 41 then --CMD_REMOVE_BREAKPOINT
-                print("dezog: CMD_REMOVE_BREAKPOINT")
+                if enable_logging then
+                     print("dezog: CMD_REMOVE_BREAKPOINT")
+                end                
                 local bpid = string.unpack("<I2", payload)
-                local bpl = cpu.debug:bplist();
+                local bpl = cpu.debug:bplist()
                 local bp = bpl[bpid]
                 if bp then
                     -- Check for duplicate breakpoints at the same address and remove them all                    
                     for id, oldbp in pairs(bpl) do
-                        if oldbp.address == bp.address then
-                            print("dezog: removing breakpoint at", oldbp.address, "with id", id)
+                        if oldbp.address == bp.address then                            
                             cpu.debug:bpclear(id)            
                         end                    
                     end
@@ -252,7 +283,9 @@ function dezog.startplugin()
         end
         
         if initialized and last_state ~= debugger.execution_state and debugger.execution_state == "stop" then
-            print("dezog: execution state changed to '" .. debugger.execution_state .. "'")
+            if enable_logging then
+                print("dezog: execution state changed to '" .. debugger.execution_state .. "'")
+            end            
             if temp_bp then
                 for _, bp in ipairs(temp_bp) do
                     if bp.enabled then
@@ -287,8 +320,10 @@ function dezog.response(socket, seq, payload)
     else
         response = string.pack("<I4I1", len, seq)
     end
-    --print("dezog: response hex", len, seq, toHex(response))
-    print("dezog: response", len, seq)
+    if enable_logging then
+        --print("dezog: response hex", len, seq, toHex(payload or ""))
+        print("dezog: response", len, seq)
+    end    
     
     socket:write(response)
 end
