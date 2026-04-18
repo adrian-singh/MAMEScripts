@@ -64,6 +64,9 @@ function dezog.startplugin()
 
             initialized = false
             socket_open = false
+            break_reason = 0
+            last_state = nil
+            temp_bp = {}
             debugger.execution_state="run"            
         end
     end)
@@ -127,7 +130,8 @@ function dezog.startplugin()
 
                 debugger.execution_state = "stop" 
                 break_reason = -255
-                
+                last_state = nil
+
                 cpu.debug:bpclear()
 
                 ports:writev_u8(0xe3, 0)
@@ -292,7 +296,14 @@ function dezog.startplugin()
             end
         end
         
-        if initialized and last_state ~= debugger.execution_state and debugger.execution_state == "stop" and break_reason ~= -255 then
+        --if initialized 
+        -- and last_state ~= debugger.execution_state 
+        -- and debugger.execution_state == "stop" 
+        -- and break_reason ~= -255 then
+        if initialized
+         and debugger.execution_state == "stop"
+         and (break_reason ~= -255 or last_state ~= "stop")
+         and (last_state ~= "stop" or break_reason == 1) then
             if enable_logging then
                 print("dezog: execution state changed to '" .. debugger.execution_state .. "'")
             end            
@@ -311,6 +322,11 @@ function dezog.startplugin()
             if break_reason == 1 then -- manual break (Pause sent)
                 response = string.pack("I1I1<I2I1c1", 1, 1, 0, 0, "\0")
             else
+                -- special case for unmapped memory to avoid overflow in bank number
+                if bank == 255 then 
+                    bank = 254 
+                end
+
                 response = string.pack("I1I1<I2I1c1", 1, 0, pc, bank+1, "\0")
             end
             break_reason = 0
