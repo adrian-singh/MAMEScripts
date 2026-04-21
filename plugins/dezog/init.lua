@@ -189,7 +189,7 @@ function dezog.startplugin()
                 local banknum = string.unpack("I1", payload)
                 if enable_logging then
                     print("dezog: CMD_WRITE_BANK")
-                    print("dezog: CMD_WRITE_BANK", banknum, string.format("0x%05X", bankaddr))
+                    print("dezog: CMD_WRITE_BANK", banknum)
                 end                
                 -- do memory writes by paging to MMU7 rather than direct to main SRAM
                 local mmu7bank = nregs:readv_u8(0x57) -- store current bank at MMU7
